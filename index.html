@@ -109,9 +109,19 @@
     filter: drop-shadow(0 2px 6px rgba(0,0,0,0.6));
   }
 
-  /* reticle / lock-on */
+  /* reticle / lock-on
+     Positioned explicitly at the wheel's top/pointer area (rather than
+     relying on the browser's default static-position fallback, which
+     is undefined enough to differ between browsers/WebViews) — this is
+     also where the winning segment always ends up, since the spin
+     animation always rotates the chosen slice to the pointer. */
   .reticle{
     position:absolute;
+    top:8%;
+    left:50%;
+    width:38%;
+    height:24%;
+    margin-left:-19%;
     pointer-events:none;
     opacity:0;
     z-index:7;
@@ -399,7 +409,7 @@
 <script>
 (async function(){
   const PALETTE = ["#2DD4BF","#6366F1","#FB7176","#F5A623","#C6FF3D","#E4567B","#38BDF8","#A78BFA","#34D399","#F472B6"];
-  const DEFAULT_SPOTS = [
+ const DEFAULT_SPOTS = [
     "Kompliment", "Slajs", "Klementina", "Kašča",
     "Inglič", "Das ist Valter"
   ];
@@ -595,7 +605,25 @@
     currentRotation += finalRotation;
     canvas.style.transform = `rotate(${currentRotation}deg)`;
 
-    await new Promise(res => setTimeout(res, 4300));
+    // Wait for the CSS transition to actually finish rather than guessing
+    // a fixed delay — slower/embedded displays (Android kiosk WebViews)
+    // can take noticeably longer than desktop, and a hardcoded timeout
+    // reveals the result before the wheel has visually stopped.
+    await new Promise(resolve => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        canvas.removeEventListener('transitionend', onEnd);
+        resolve();
+      };
+      const onEnd = (e) => {
+        if (e.propertyName === 'transform') finish();
+      };
+      canvas.addEventListener('transitionend', onEnd);
+      // Safety net in case transitionend doesn't fire on this WebView
+      setTimeout(finish, 5500);
+    });
 
     const chosen = spots[targetIndex];
     const now = new Date();
@@ -643,6 +671,7 @@
   // ---------- init ----------
   await loadState();
   excludeToggle.classList.toggle('on', excludeLast);
+  canvas.style.transform = 'rotate(0deg)';
   renderRoster();
   renderLog();
   drawWheel();
