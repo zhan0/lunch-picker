@@ -85,7 +85,9 @@
     width:100%; height:100%;
     display:block;
     filter: drop-shadow(0 0 40px rgba(0,0,0,0.55));
-    transition: transform 4.2s cubic-bezier(.12,.85,.1,1);
+  }
+  #wheelCanvas.spinning{
+    filter:none; /* drop-shadow is expensive to repaint every frame on weak GPUs */
   }
 
   .hub{
@@ -351,7 +353,7 @@
       <svg class="pointer" width="34" height="40" viewBox="0 0 34 40">
         <path d="M17 40 L2 6 Q17 -4 32 6 Z" fill="#EDEFF2" stroke="#0A0D10" stroke-width="1.5"/>
       </svg>
-      <canvas id="wheelCanvas" width="900" height="900"></canvas>
+      <canvas id="wheelCanvas" width="640" height="640"></canvas>
       <div class="hub">
         <svg viewBox="0 0 24 24" fill="none">
           <circle cx="12" cy="12" r="3.2" stroke="#C6FF3D" stroke-width="1.6"/>
@@ -409,9 +411,9 @@
 <script>
 (async function(){
   const PALETTE = ["#2DD4BF","#6366F1","#FB7176","#F5A623","#C6FF3D","#E4567B","#38BDF8","#A78BFA","#34D399","#F472B6"];
- const DEFAULT_SPOTS = [
-    "Kompliment", "Slajs", "Klementina", "Kašča",
-    "Inglič", "Das ist Valter"
+  const DEFAULT_SPOTS = [
+    "Kompliment", "Slajs", "Das ist Valter", "Kašča",
+    "Inglič", "Mlinotest/Zadruga", "Klementina"
   ];
 
   let spots = [];
@@ -499,7 +501,7 @@
       ctx.rotate(start + slice/2);
       ctx.textAlign = 'right';
       ctx.fillStyle = '#0A0D10';
-      const fontSize = Math.max(16, Math.min(26, 340/n));
+      const fontSize = Math.max(14, Math.min(22, 240/n));
       ctx.font = `700 ${fontSize}px 'JetBrains Mono', monospace`;
       const label = spots[i].length > 20 ? spots[i].slice(0,18)+'…' : spots[i];
       ctx.fillText(label, r - 26, 6);
@@ -585,10 +587,37 @@
     }catch(e){}
   }
 
+  function easeOutQuint(t){
+    return 1 - Math.pow(1 - t, 5);
+  }
+
+  function animateRotation(fromDeg, toDeg, duration){
+    return new Promise(resolve => {
+      const start = performance.now();
+      function frame(now){
+        const elapsed = now - start;
+        const t = Math.min(1, elapsed / duration);
+        const eased = easeOutQuint(t);
+        const current = fromDeg + (toDeg - fromDeg) * eased;
+        canvas.style.transform = `rotate(${current}deg)`;
+        if(t < 1){
+          requestAnimationFrame(frame);
+        } else {
+          // snap exactly to the target so there's zero drift between
+          // what's painted and what we're about to announce
+          canvas.style.transform = `rotate(${toDeg}deg)`;
+          resolve();
+        }
+      }
+      requestAnimationFrame(frame);
+    });
+  }
+
   async function spin(){
     if(spinning || spots.length < 2) return;
     spinning = true;
     spinBtn.disabled = true;
+    canvas.classList.add('spinning');
     reticle.classList.remove('show');
     resultLine.innerHTML = 'Scanning candidates…';
 
@@ -602,28 +631,16 @@
     // we rotate the wheel so that targetCenter ends at top (0deg / pointer)
     const finalRotation = fullSpins*360 + (360 - targetCenter);
 
-    currentRotation += finalRotation;
-    canvas.style.transform = `rotate(${currentRotation}deg)`;
+    const from = currentRotation;
+    const to = currentRotation + finalRotation;
+    currentRotation = to;
 
-    // Wait for the CSS transition to actually finish rather than guessing
-    // a fixed delay — slower/embedded displays (Android kiosk WebViews)
-    // can take noticeably longer than desktop, and a hardcoded timeout
-    // reveals the result before the wheel has visually stopped.
-    await new Promise(resolve => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        canvas.removeEventListener('transitionend', onEnd);
-        resolve();
-      };
-      const onEnd = (e) => {
-        if (e.propertyName === 'transform') finish();
-      };
-      canvas.addEventListener('transitionend', onEnd);
-      // Safety net in case transitionend doesn't fire on this WebView
-      setTimeout(finish, 5500);
-    });
+    // This resolves only once we've painted the exact final frame —
+    // no separate CSS engine to fall out of sync with, so the result
+    // we reveal below always matches what's on screen, even on
+    // hardware that's dropping frames along the way.
+    await animateRotation(from, to, 4200);
+    canvas.classList.remove('spinning');
 
     const chosen = spots[targetIndex];
     const now = new Date();
